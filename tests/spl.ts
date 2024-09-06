@@ -1,29 +1,27 @@
 import * as anchor from "@coral-xyz/anchor";
+import * as web3 from "@solana/web3.js"
+import assert from "assert"
 import { Program } from "@coral-xyz/anchor";
 import { Spl } from "../target/types/spl";
-
+import {BN} from "bn.js"
 describe("spl", () => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
 
-  const program = anchor.workspace.Spl as Program<Spl>;
+  const pg = anchor.workspace.Spl as Program<Spl>;
 
-  it("Is initialized!", async () => {
-    // Add your test here.
-    const tx = await program.methods.initialize().rpc();
-    console.log("Your transaction signature", tx);
-  });
 
-  describe("Test Minter", () => {
     // Metaplex Constants
     const METADATA_SEED = "metadata";
-    const TOKEN_METADATA_PROGRAM_ID = program
+    const TOKEN_METADATA_PROGRAM_ID = new web3.PublicKey(
+      "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s" // metaplex metadata program id
+    )
 
     // Constants from our program
     const MINT_SEED = "mint";
   
     // Data for our tests
-    const payer = anchor.wallet.publicKey;
+    const payer = pg.provider.publicKey;
     const metadata = {
       name: "Just a Test Token",
       symbol: "TEST",
@@ -33,7 +31,7 @@ describe("spl", () => {
     const mintAmount = 10;
     const [mint] = web3.PublicKey.findProgramAddressSync(
       [Buffer.from(MINT_SEED)],
-      pg.PROGRAM_ID
+      pg.programId
     );
 
     const [metadataAddress] = web3.PublicKey.findProgramAddressSync(
@@ -45,57 +43,11 @@ describe("spl", () => {
       TOKEN_METADATA_PROGRAM_ID
     );
 
-    // Helper function to confirm transactions
-    async function confirmTransaction(
-        connection: web3.Connection,
-        signature: web3.TransactionSignature,
-        desiredConfirmationStatus: web3.TransactionConfirmationStatus = 'confirmed',
-        timeout: number = 30000,
-        pollInterval: number = 1000,
-        searchTransactionHistory: boolean = false
-    ): Promise<web3.SignatureStatus> {
-        const start = Date.now();
 
-        while (Date.now() - start < timeout) {
-            const { value: statuses } = await connection.getSignatureStatuses([signature], { searchTransactionHistory });
 
-            if (!statuses || statuses.length === 0) {
-                throw new Error('Failed to get signature status');
-            }
-
-            const status = statuses[0];
-
-            if (status === null) {
-                await new Promise(resolve => setTimeout(resolve, pollInterval));
-                continue;
-            }
-
-            if (status.err) {
-                throw new Error(`Transaction failed: ${JSON.stringify(status.err)}`);
-            }
-
-            if (status.confirmationStatus && status.confirmationStatus === desiredConfirmationStatus) {
-                return status;
-            }
-
-            if (status.confirmationStatus === 'finalized') {
-                return status;
-            }
-
-            await new Promise(resolve => setTimeout(resolve, pollInterval));
-        }
-
-        throw new Error(`Transaction confirmation timeout after ${timeout}ms`);
-    }
-  
     it("initialize", async () => {
 
-      const info = await pg.connection.getAccountInfo(mint);
-      if (info) {
-        return; // Do not attempt to initialize if already initialized
-      }
-      console.log("  Mint not found. Attempting to initialize.");
-   
+    
       const context = {
         metadata: metadataAddress,
         mint,
@@ -106,14 +58,13 @@ describe("spl", () => {
         tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
       };
   
-      const txHash = await pg.program.methods
+      const txHash = await pg.methods
         .initToken(metadata)
         .accounts(context)
         .rpc();
   
-      await confirmTransaction(pg.connection, txHash, 'finalized');
       console.log(`  https://explorer.solana.com/tx/${txHash}?cluster=devnet`);
-      const newInfo = await pg.connection.getAccountInfo(mint);
+      const newInfo = await pg.provider.connection.getAccountInfo(mint);
       assert(newInfo, "  Mint should be initialized.");
     });
   
@@ -126,7 +77,7 @@ describe("spl", () => {
   
       let initialBalance: number;
       try {
-        const balance = (await pg.connection.getTokenAccountBalance(destination))
+        const balance = (await pg.provider.connection.getTokenAccountBalance(destination))
         initialBalance = balance.value.uiAmount;
       } catch {
         // Token account not yet initiated has 0 balance
@@ -143,15 +94,14 @@ describe("spl", () => {
         associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
       };
   
-      const txHash = await pg.program.methods
+      const txHash = await pg.methods
         .mintTokens(new BN(mintAmount * 10 ** metadata.decimals))
         .accounts(context)
         .rpc();
-      await confirmTransaction(pg.connection, txHash);
       console.log(`  https://explorer.solana.com/tx/${txHash}?cluster=devnet`);
   
       const postBalance = (
-        await pg.connection.getTokenAccountBalance(destination)
+        await pg.provider.connection.getTokenAccountBalance(destination)
       ).value.uiAmount;
       assert.equal(
         initialBalance + mintAmount,
@@ -160,7 +110,7 @@ describe("spl", () => {
       );
     });
 
-  });
+
 
 
 });

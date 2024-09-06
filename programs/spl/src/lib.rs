@@ -11,12 +11,11 @@ use anchor_spl::{
 
 
 
-// 2. Declare Program ID (SolPG will automatically update this when you deploy)
 declare_id!("2asoQGDxqfPXZSP5xSKd5ksT4v2rqy5BKNF2MwQhoRmt");
 
 // 3. Define the program and instructions
 #[program]
-mod token_minter {
+pub mod spl {
     use super::*;
     pub fn init_token(ctx: Context<InitToken>, metadata: InitTokenParams) -> Result<()> {
         let seeds = &["mint".as_bytes(), &[ctx.bumps.mint]];
@@ -132,3 +131,4 @@ pub struct InitTokenParams {
     pub uri: String,
     pub decimals: u8,
 }
+
