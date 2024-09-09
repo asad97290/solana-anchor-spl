@@ -4,6 +4,20 @@ import assert from "assert"
 import { Program } from "@coral-xyz/anchor";
 import { Spl } from "../target/types/spl";
 import {BN} from "bn.js"
+import { createAccount } from "@solana/spl-token";
+async function confirmTransaction(tx) {
+  const latestBlockHash = await anchor.getProvider().connection.getLatestBlockhash();
+  await anchor.getProvider().connection.confirmTransaction({
+    blockhash: latestBlockHash.blockhash,
+    lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+    signature: tx,
+  });
+}
+// this airdrops sol to an address
+async function airdropSol(publicKey, amount) {
+let airdropTx = await anchor.getProvider().connection.requestAirdrop(publicKey, amount);
+await confirmTransaction(airdropTx);
+}
 describe("spl", () => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
@@ -42,8 +56,6 @@ describe("spl", () => {
       ],
       TOKEN_METADATA_PROGRAM_ID
     );
-
-
 
     it("initialize", async () => {
 
@@ -109,8 +121,85 @@ describe("spl", () => {
         "Post balance should equal initial plus mint amount"
       );
     });
+   
+    it("transfer tokens", async () => {
+
+      const from =  anchor.utils.token.associatedAddress({
+        mint: mint,
+        owner: payer,
+      });
+  
+      let initialBalance: number;
+      try {
+        const balance = (await pg.provider.connection.getTokenAccountBalance(from))
+        initialBalance = balance.value.uiAmount;
+      } catch {
+        // Token account not yet initiated has 0 balance
+        initialBalance = 0;
+      } 
 
 
+   
 
+      let reciever = anchor.web3.Keypair.generate()
+      await airdropSol(reciever.publicKey, 1e9); // 1 SOL
+      let recieverTokenAccountKeypair = anchor.web3.Keypair.generate()
+
+      await createAccount(pg.provider.connection,reciever,mint,reciever.publicKey,recieverTokenAccountKeypair);
+  
+
+
+      let receiverInitialBalance: number;
+      try {
+        const balance = (await pg.provider.connection.getTokenAccountBalance(recieverTokenAccountKeypair.publicKey))
+        receiverInitialBalance = balance.value.uiAmount;
+      } catch {
+        // Token account not yet initiated has 0 balance
+        receiverInitialBalance = 0;
+      } 
+
+      const context = {
+        mintToken:mint,
+        fromAccount:from,
+        toAccount:recieverTokenAccountKeypair.publicKey,
+        systemProgram: web3.SystemProgram.programId,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+      };
+  
+      const txHash = await pg.methods
+        .transerTokens(new BN(mintAmount * 10 ** metadata.decimals))
+        .accounts(context)
+        .rpc();
+      console.log(`  https://explorer.solana.com/tx/${txHash}?cluster=devnet`);
+  
+
+
+      /**
+      * check sender balance
+      */ 
+      const postBalance = (
+        await pg.provider.connection.getTokenAccountBalance(from)
+      ).value.uiAmount;
+      assert.equal(
+        initialBalance - mintAmount,
+        postBalance,
+        "Post balance should equal initial plus mint amount"
+      );
+
+    /**
+     * check receiver balance
+    */ 
+
+      const receiverPostBalance = (
+        await pg.provider.connection.getTokenAccountBalance(recieverTokenAccountKeypair.publicKey)
+      ).value.uiAmount;
+      assert.equal(
+        receiverInitialBalance + mintAmount,
+        receiverPostBalance,
+        "Post balance should equal initial plus mint amount"
+      );
+
+    });
 
 });
