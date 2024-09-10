@@ -6,10 +6,8 @@ use anchor_spl::{
         create_metadata_accounts_v3, mpl_token_metadata::types::DataV2, CreateMetadataAccountsV3,
         Metadata as Metaplex,
     },
-    token::{mint_to, Mint, MintTo,transfer, Transfer, Token, TokenAccount},
+    token::{mint_to, transfer, Mint, MintTo, Token, TokenAccount, Transfer},
 };
-
-
 
 declare_id!("2asoQGDxqfPXZSP5xSKd5ksT4v2rqy5BKNF2MwQhoRmt");
 
@@ -72,21 +70,20 @@ pub mod spl {
         Ok(())
     }
 
-
-
-    pub fn transer_tokens(ctx: Context<TransferToken>,amount:u64)->Result<()>{
+    pub fn transfer_tokens(ctx: Context<TransferToken>, amount: u64) -> Result<()> {
         transfer(
-        CpiContext::new(
-        ctx.accounts.token_program.to_account_info(), 
-        Transfer{
-            authority:ctx.accounts.signer.to_account_info(),
-            from:ctx.accounts.from_account.to_account_info(),
-            to:ctx.accounts.to_account.to_account_info()
-        }), 
-        amount
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    authority: ctx.accounts.signer.to_account_info(),
+                    from: ctx.accounts.from_account.to_account_info(),
+                    to: ctx.accounts.to_account.to_account_info(),
+                },
+            ),
+            amount,
         )?;
         Ok(())
-       }
+    }
 }
 
 // 4. Define the context for each instruction
@@ -140,18 +137,18 @@ pub struct MintTokens<'info> {
 }
 
 #[derive(Accounts)]
-pub struct TransferToken<'info>{ 
- #[account(mut)]
- pub mint_token:Account<'info,Mint>,
- #[account(mut)]
- pub from_account:Account<'info,TokenAccount>,
- #[account(mut)]
- pub to_account:Account<'info,TokenAccount>,
- #[account(mut)]
- pub signer:Signer<'info>,
- pub system_program:Program<'info,System>,
- pub token_program:Program<'info,Token>,
- pub associate_token_program:Program<'info,AssociatedToken>,
+pub struct TransferToken<'info> {
+    #[account(mut)]
+    pub mint_token: Account<'info, Mint>,
+    #[account(mut)]
+    pub from_account: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub to_account: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associate_token_program: Program<'info, AssociatedToken>,
 }
 // 5. Define the init token params
 #[derive(AnchorSerialize, AnchorDeserialize, Debug, Clone)]
@@ -161,4 +158,3 @@ pub struct InitTokenParams {
     pub uri: String,
     pub decimals: u8,
 }
-

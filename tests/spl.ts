@@ -2,7 +2,7 @@ import * as anchor from "@coral-xyz/anchor";
 import * as web3 from "@solana/web3.js"
 import assert from "assert"
 import { Program } from "@coral-xyz/anchor";
-import { Spl } from "../target/types/spl";
+import { LamportToken } from "../target/types/lamport_token";
 import {BN} from "bn.js"
 import { createAccount } from "@solana/spl-token";
 async function confirmTransaction(tx) {
@@ -18,11 +18,12 @@ async function airdropSol(publicKey, amount) {
 let airdropTx = await anchor.getProvider().connection.requestAirdrop(publicKey, amount);
 await confirmTransaction(airdropTx);
 }
-describe("spl", () => {
+
+describe("spl", async() => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
 
-  const pg = anchor.workspace.Spl as Program<Spl>;
+  const pg = anchor.workspace.Spl as Program<LamportToken>;
 
 
     // Metaplex Constants
@@ -37,8 +38,8 @@ describe("spl", () => {
     // Data for our tests
     const payer = pg.provider.publicKey;
     const metadata = {
-      name: "Just a Test Token",
-      symbol: "TEST",
+      name: "lamport Token",
+      symbol: "LMT",
       uri: "https://5vfxc4tr6xoy23qefqbj4qx2adzkzapneebanhcalf7myvn5gzja.arweave.net/7UtxcnH13Y1uBCwCnkL6APKsge0hAgacQFl-zFW9NlI",
       decimals: 9,
     };
@@ -57,9 +58,10 @@ describe("spl", () => {
       TOKEN_METADATA_PROGRAM_ID
     );
 
+
     it("initialize", async () => {
 
-    
+
       const context = {
         metadata: metadataAddress,
         mint,
@@ -78,11 +80,15 @@ describe("spl", () => {
       console.log(`  https://explorer.solana.com/tx/${txHash}?cluster=devnet`);
       const newInfo = await pg.provider.connection.getAccountInfo(mint);
       assert(newInfo, "  Mint should be initialized.");
+
+      
+
+
     });
   
     it("mint tokens", async () => {
 
-      const destination = await anchor.utils.token.associatedAddress({
+      const destination =  anchor.utils.token.associatedAddress({
         mint: mint,
         owner: payer,
       });
@@ -168,7 +174,7 @@ describe("spl", () => {
       };
   
       const txHash = await pg.methods
-        .transerTokens(new BN(mintAmount * 10 ** metadata.decimals))
+        .transferTokens(new BN(mintAmount * 10 ** metadata.decimals))
         .accounts(context)
         .rpc();
       console.log(`  https://explorer.solana.com/tx/${txHash}?cluster=devnet`);
