@@ -1,21 +1,21 @@
-// 1. Import dependencies
 use anchor_lang::prelude::*;
+
 use anchor_spl::{
     associated_token::AssociatedToken,
     metadata::{
         create_metadata_accounts_v3, mpl_token_metadata::types::DataV2, CreateMetadataAccountsV3,
-        Metadata as Metaplex,
+        Metadata,
     },
-    token::{mint_to, transfer, Mint, MintTo, Token, TokenAccount, Transfer},
+    token::{Mint, MintTo, Token, TokenAccount, Transfer,Approve},
 };
-
 declare_id!("2asoQGDxqfPXZSP5xSKd5ksT4v2rqy5BKNF2MwQhoRmt");
 
 // 3. Define the program and instructions
 #[program]
 pub mod spl {
     use super::*;
-    pub fn init_token(ctx: Context<InitToken>, metadata: InitTokenParams) -> Result<()> {
+ 
+    pub fn initialize(ctx: Context<InitToken>, metadata: InitTokenParams) -> Result<()> {
         let seeds = &["mint".as_bytes(), &[ctx.bumps.mint]];
         let signer = [&seeds[..]];
 
@@ -45,16 +45,14 @@ pub mod spl {
 
         create_metadata_accounts_v3(metadata_ctx, token_data, false, true, None)?;
 
-        msg!("Token mint created successfully.");
-
         Ok(())
     }
 
-    pub fn mint_tokens(ctx: Context<MintTokens>, quantity: u64) -> Result<()> {
+    pub fn mint_tokens(ctx: Context<MintTokens>, amount: u64) -> Result<()> {
         let seeds = &["mint".as_bytes(), &[ctx.bumps.mint]];
         let signer = [&seeds[..]];
 
-        mint_to(
+        anchor_spl::token::mint_to(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 MintTo {
@@ -64,29 +62,47 @@ pub mod spl {
                 },
                 &signer,
             ),
-            quantity,
+            amount,
         )?;
 
         Ok(())
     }
 
-    pub fn transfer_tokens(ctx: Context<TransferToken>, amount: u64) -> Result<()> {
-        transfer(
+    pub fn transfer(ctx: Context<TransferToken>, amount: u64) -> Result<()> {
+        anchor_spl::token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
                 Transfer {
-                    authority: ctx.accounts.signer.to_account_info(),
-                    from: ctx.accounts.from_account.to_account_info(),
-                    to: ctx.accounts.to_account.to_account_info(),
+                    authority: ctx.accounts.from.to_account_info(),
+                    from: ctx.accounts.from_ata.to_account_info(),
+                    to: ctx.accounts.to_ata.to_account_info(),
                 },
             ),
             amount,
         )?;
         Ok(())
     }
+
+    pub fn approve(ctx: Context<ApproveToken>, amount: u64) -> Result<()> {
+        anchor_spl::token::approve(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Approve {
+                    to: ctx.accounts.from_ata.to_account_info(),
+                    authority: ctx.accounts.from.to_account_info(),
+                    delegate: ctx.accounts.delegate.to_account_info(),
+
+
+                    
+                },
+            ),
+            amount,
+        )?;
+        Ok(())
+    }
+
 }
 
-// 4. Define the context for each instruction
 #[derive(Accounts)]
 #[instruction(
     params: InitTokenParams
@@ -109,7 +125,7 @@ pub struct InitToken<'info> {
     pub rent: Sysvar<'info, Rent>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
-    pub token_metadata_program: Program<'info, Metaplex>,
+    pub token_metadata_program: Program<'info, Metadata>,
 }
 
 #[derive(Accounts)]
@@ -138,23 +154,36 @@ pub struct MintTokens<'info> {
 
 #[derive(Accounts)]
 pub struct TransferToken<'info> {
+
     #[account(mut)]
-    pub mint_token: Account<'info, Mint>,
+    pub from_ata: Account<'info, TokenAccount>,
+    
     #[account(mut)]
-    pub from_account: Account<'info, TokenAccount>,
-    #[account(mut)]
-    pub to_account: Account<'info, TokenAccount>,
-    #[account(mut)]
-    pub signer: Signer<'info>,
-    pub system_program: Program<'info, System>,
+    pub to_ata: Account<'info, TokenAccount>,
+
+    pub from: Signer<'info>,
     pub token_program: Program<'info, Token>,
-    pub associate_token_program: Program<'info, AssociatedToken>,
 }
-// 5. Define the init token params
+
 #[derive(AnchorSerialize, AnchorDeserialize, Debug, Clone)]
 pub struct InitTokenParams {
     pub name: String,
     pub symbol: String,
     pub uri: String,
     pub decimals: u8,
+}
+
+
+#[derive(Accounts)]
+pub struct ApproveToken<'info> {
+
+    #[account(mut)]
+    pub from_ata: Account<'info, TokenAccount>,
+    
+    /// CHECK: This is an unchecked account because the delegate doesn't need to be of any specific type.
+    pub delegate: UncheckedAccount<'info>,
+    
+    #[account(mut)]
+    pub from: Signer<'info>,
+    pub token_program: Program<'info, Token>,
 }
