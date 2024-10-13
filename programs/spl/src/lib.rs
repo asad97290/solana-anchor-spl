@@ -1,25 +1,38 @@
 use anchor_lang::prelude::*;
 
 use anchor_spl::{
-    associated_token::AssociatedToken,
     metadata::{
-        create_metadata_accounts_v3, mpl_token_metadata::types::DataV2, CreateMetadataAccountsV3,
-        Metadata,
+        create_metadata_accounts_v3,update_metadata_accounts_v2, mpl_token_metadata::types::DataV2,UpdateMetadataAccountsV2, CreateMetadataAccountsV3,
     },
-    token::{Mint, MintTo, Token, TokenAccount, Transfer,Approve},
+    token::{MintTo, Burn,Transfer, Approve, SetAuthority},
 };
-declare_id!("2asoQGDxqfPXZSP5xSKd5ksT4v2rqy5BKNF2MwQhoRmt");
+mod states;
+mod errors;
+mod constants;
 
-// 3. Define the program and instructions
+use crate::states::*;
+use crate::errors::*;
+
+use constants::*;
+
+declare_id!("GamEep1grEhZp6m1YLuhyxRDUR3kRzND9EiP5Uz8KJKT");
+
+
 #[program]
 pub mod spl {
+
+
+
     use super::*;
  
     pub fn initialize(ctx: Context<InitToken>, metadata: InitTokenParams) -> Result<()> {
-        let seeds = &["mint".as_bytes(), &[ctx.bumps.mint]];
+        // PDA seeds and bump to "sign" for CPI
+        let seeds = &[MIN_SEED, &[ctx.bumps.mint]];
         let signer = [&seeds[..]];
 
-        let token_data: DataV2 = DataV2 {
+
+        // On-chain token metadata for the mint
+        let token_data = DataV2 {
             name: metadata.name,
             symbol: metadata.symbol,
             uri: metadata.uri,
@@ -33,30 +46,75 @@ pub mod spl {
             ctx.accounts.token_metadata_program.to_account_info(),
             CreateMetadataAccountsV3 {
                 payer: ctx.accounts.payer.to_account_info(),
-                update_authority: ctx.accounts.mint.to_account_info(),
+                update_authority: ctx.accounts.payer.to_account_info(),
                 mint: ctx.accounts.mint.to_account_info(),
                 metadata: ctx.accounts.metadata.to_account_info(),
-                mint_authority: ctx.accounts.mint.to_account_info(),
+                // mint_authority: ctx.accounts.mint.to_account_info(),
+                mint_authority: ctx.accounts.payer.to_account_info(),
                 system_program: ctx.accounts.system_program.to_account_info(),
                 rent: ctx.accounts.rent.to_account_info(),
             },
             &signer,
         );
 
-        create_metadata_accounts_v3(metadata_ctx, token_data, false, true, None)?;
+        create_metadata_accounts_v3(
+            metadata_ctx, // cpi context
+            token_data,// token metadata
+            true,  // is_mutable
+            true, // update_authority_is_signer
+            None // collection details
+        )?;
 
         Ok(())
     }
 
+
+    pub fn update_metadata(ctx: Context<UpdateMetadata>, new_metadata: InitTokenParams) -> Result<()> {
+
+        let new_data = DataV2 {
+            name: new_metadata.name,
+            symbol: new_metadata.symbol,
+            uri: new_metadata.uri,
+            seller_fee_basis_points: 0, // Modify if needed
+            creators: None,
+            collection: None,
+            uses: None,
+        };
+
+        let metadata_ctx = CpiContext::new(
+            ctx.accounts.token_metadata_program.to_account_info(),
+            UpdateMetadataAccountsV2 {
+                update_authority: ctx.accounts.payer.to_account_info(),
+                metadata: ctx.accounts.metadata.to_account_info(),
+            }
+        );
+
+        update_metadata_accounts_v2(
+            metadata_ctx,  // CPI context
+            None,          // New update authority, if any
+            Some(new_data), // Updated data
+            None,          // Primary sale happened
+            None           // Is mutable
+        )?;
+
+        Ok(())
+
+    }
+
     pub fn mint_tokens(ctx: Context<MintTokens>, amount: u64) -> Result<()> {
-        let seeds = &["mint".as_bytes(), &[ctx.bumps.mint]];
+
+        require!(ctx.accounts.mint.supply + amount <= MAX_CAP, CustomError::CapExceed);
+
+        // PDA seeds and bump to "sign" for CPI
+        let seeds = &[MIN_SEED, &[ctx.bumps.mint]];
         let signer = [&seeds[..]];
 
         anchor_spl::token::mint_to(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 MintTo {
-                    authority: ctx.accounts.mint.to_account_info(),
+                    // authority: ctx.accounts.mint.to_account_info(),
+                    authority: ctx.accounts.payer.to_account_info(),
                     to: ctx.accounts.destination.to_account_info(),
                     mint: ctx.accounts.mint.to_account_info(),
                 },
@@ -69,6 +127,7 @@ pub mod spl {
     }
 
     pub fn transfer(ctx: Context<TransferToken>, amount: u64) -> Result<()> {
+
         anchor_spl::token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -90,10 +149,7 @@ pub mod spl {
                 Approve {
                     to: ctx.accounts.from_ata.to_account_info(),
                     authority: ctx.accounts.from.to_account_info(),
-                    delegate: ctx.accounts.delegate.to_account_info(),
-
-
-                    
+                    delegate: ctx.accounts.delegate.to_account_info(),   
                 },
             ),
             amount,
@@ -101,89 +157,36 @@ pub mod spl {
         Ok(())
     }
 
-}
+    pub fn burn(ctx: Context<BurnTokens>, amount: u64) -> Result<()> {
+        anchor_spl::token::burn(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Burn {
+                    mint: ctx.accounts.mint.to_account_info(),
+                    from: ctx.accounts.from_ata.to_account_info(),   
+                    authority: ctx.accounts.payer.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+        Ok(())
+    }
 
-#[derive(Accounts)]
-#[instruction(
-    params: InitTokenParams
-)]
-pub struct InitToken<'info> {
-    /// CHECK: New Metaplex Account being created
-    #[account(mut)]
-    pub metadata: UncheckedAccount<'info>,
-    #[account(
-        init,
-        seeds = [b"mint"],
-        bump,
-        payer = payer,
-        mint::decimals = params.decimals,
-        mint::authority = mint,
-    )]
-    pub mint: Account<'info, Mint>,
-    #[account(mut)]
-    pub payer: Signer<'info>,
-    pub rent: Sysvar<'info, Rent>,
-    pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
-    pub token_metadata_program: Program<'info, Metadata>,
-}
-
-#[derive(Accounts)]
-pub struct MintTokens<'info> {
-    #[account(
-        mut,
-        seeds = [b"mint"],
-        bump,
-        mint::authority = mint,
-    )]
-    pub mint: Account<'info, Mint>,
-    #[account(
-        init_if_needed,
-        payer = payer,
-        associated_token::mint = mint,
-        associated_token::authority = payer,
-    )]
-    pub destination: Account<'info, TokenAccount>,
-    #[account(mut)]
-    pub payer: Signer<'info>,
-    pub rent: Sysvar<'info, Rent>,
-    pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
-}
-
-#[derive(Accounts)]
-pub struct TransferToken<'info> {
-
-    #[account(mut)]
-    pub from_ata: Account<'info, TokenAccount>,
-    
-    #[account(mut)]
-    pub to_ata: Account<'info, TokenAccount>,
-
-    pub from: Signer<'info>,
-    pub token_program: Program<'info, Token>,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Debug, Clone)]
-pub struct InitTokenParams {
-    pub name: String,
-    pub symbol: String,
-    pub uri: String,
-    pub decimals: u8,
+    pub fn change_mint_authority(ctx: Context<ChangeMintAuthority>,new_authority: Pubkey) -> Result<()> {
+        anchor_spl::token::set_authority(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                SetAuthority {
+                    current_authority: ctx.accounts.current_authority.to_account_info(),
+                    account_or_mint:ctx.accounts.mint.to_account_info() 
+                },
+            ),
+            anchor_spl::token::spl_token::instruction::AuthorityType::MintTokens, // AuthorityType is an enum
+            Some(new_authority),
+        )?;
+        Ok(())
+    }
 }
 
 
-#[derive(Accounts)]
-pub struct ApproveToken<'info> {
 
-    #[account(mut)]
-    pub from_ata: Account<'info, TokenAccount>,
-    
-    /// CHECK: This is an unchecked account because the delegate doesn't need to be of any specific type.
-    pub delegate: UncheckedAccount<'info>,
-    
-    #[account(mut)]
-    pub from: Signer<'info>,
-    pub token_program: Program<'info, Token>,
-}

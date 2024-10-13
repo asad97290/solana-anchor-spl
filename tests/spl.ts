@@ -1,10 +1,11 @@
+import { Spl } from "../target/types/spl";
 import * as anchor from "@coral-xyz/anchor";
 import * as web3 from "@solana/web3.js"
 import assert from "assert"
 import { Program } from "@coral-xyz/anchor";
-import {Spl } from "../target/types/spl";
 import {BN} from "bn.js"
 import { createAssociatedTokenAccount } from "@solana/spl-token";
+
 async function confirmTransaction(tx:string) {
   const latestBlockHash = await anchor.getProvider().connection.getLatestBlockhash();
   await anchor.getProvider().connection.confirmTransaction({
@@ -19,9 +20,10 @@ let airdropTx = await anchor.getProvider().connection.requestAirdrop(publicKey, 
 await confirmTransaction(airdropTx);
 }
 
-async function getSolBalance(pg:Program<Spl>,address:anchor.web3.PublicKey):Promise<number>{
+async function getSplBalance(pg:Program<Spl>,address:anchor.web3.PublicKey):Promise<number>{
   let initialBalance: number;
   try {
+    
     const balance = (await pg.provider.connection.getTokenAccountBalance(address))
     initialBalance = balance.value.uiAmount;
   } catch {
@@ -31,12 +33,11 @@ async function getSolBalance(pg:Program<Spl>,address:anchor.web3.PublicKey):Prom
   return initialBalance;
 }
 
-describe("spl", async() => {
+describe("Spl", async() => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
 
   const pg = anchor.workspace.Spl as Program<Spl>;
-
 
     // Metaplex Constants
     const METADATA_SEED = "metadata";
@@ -44,24 +45,31 @@ describe("spl", async() => {
       "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s" // metaplex metadata program id
     )
 
-    // Constants from our program
-    const MINT_SEED = "mint";
+    const MINT_SEED = "asad-mint";
   
-    // Data for our tests
     const payer = pg.provider.publicKey;
-    let reciever = anchor.web3.Keypair.generate()
-
+    const reciever = anchor.web3.Keypair.generate()
+    const account3 = anchor.web3.Keypair.generate()
+    const mintAmount = 100_000_000_000 - 1;
+    const tokenTotalSupply = 100_000_000_000;
+    const burnAmount = 2;
 
     const metadata = {
       name: "lamport Token",
       symbol: "LMT",
       uri: "https://5vfxc4tr6xoy23qefqbj4qx2adzkzapneebanhcalf7myvn5gzja.arweave.net/7UtxcnH13Y1uBCwCnkL6APKsge0hAgacQFl-zFW9NlI",
-      decimals: 9,
+      decimals: 6,
     };
+
     const [mint] = web3.PublicKey.findProgramAddressSync(
       [Buffer.from(MINT_SEED)],
       pg.programId
     );
+
+    const payer_ata =  anchor.utils.token.associatedAddress({
+      mint: mint,
+      owner: payer,
+    });
 
     const [metadataAddress] = web3.PublicKey.findProgramAddressSync(
       [
@@ -72,6 +80,10 @@ describe("spl", async() => {
       TOKEN_METADATA_PROGRAM_ID
     );
 
+    before(async()=>{
+      await airdropSol(reciever.publicKey, 1e9); // 1 SOL
+      await airdropSol(account3.publicKey, 1e9); // 1 SOL
+    })
 
     it("initialize", async () => {
       const context = {
@@ -90,19 +102,49 @@ describe("spl", async() => {
         .rpc();
   
       const newInfo = await pg.provider.connection.getAccountInfo(mint);
-      assert(newInfo, "  Mint should be initialized.");
-      // console.log("program address",pg.programId.toString());
+      assert(newInfo)
+      const metadataString = await pg.provider.connection.getAccountInfo(metadataAddress);
+      assert(metadataString.data.toString().includes("lamport Token"));
+      assert(metadataString.data.toString().includes("LMT"));
 
     });
   
-    it("mint tokens", async () => {
-      const mintAmount = 12;
 
-      const destination =  anchor.utils.token.associatedAddress({
-        mint: mint,
-        owner: payer,
-      });
+    it("change metadata", async () => {
+      const newMetadata = {
+        name: "asad Token",
+        symbol: "asad",
+        uri: "https://5vfxc4tr6xoy23qefqbj4qx2adzkzapneebanhcalf7myvn5gzja.arweave.net/7UtxcnH13Y1uBCwCnkL6APKsge0hAgacQFl-zFW9NlI",
+        decimals: 6,
+      };
+      const context = {
+        metadata: metadataAddress,
+        mint,
+        payer,
+        systemProgram: web3.SystemProgram.programId,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+      };
   
+      await pg.methods
+        .updateMetadata(newMetadata)
+        .accounts(context)
+        .rpc();
+  
+        const newInfo = await pg.provider.connection.getAccountInfo(metadataAddress);
+        assert(newInfo.data.toString().includes("asad Token"));
+        assert(newInfo.data.toString().includes("asad"));
+      });
+
+    it("mint tokens", async () => {
+
+      const destination =  payer_ata;
+  
+      const preBalance = await getSplBalance(pg,destination)
+      assert.equal(
+        0,
+        preBalance
+      );
       
       const context = {
         mint,
@@ -115,42 +157,69 @@ describe("spl", async() => {
       };
   
       await pg.methods
-        .mintTokens(new BN(mintAmount * 10 ** metadata.decimals))
+        .mintTokens(new BN((mintAmount * 10 ** metadata.decimals).toString()))
         .accounts(context)
         .rpc();
       
-      const postBalance = (
-        await pg.provider.connection.getTokenAccountBalance(destination)
-      ).value.uiAmount;
+      const postBalance = await getSplBalance(pg,destination)
       assert.equal(
-        mintAmount,
-        postBalance,
-        "Post balance should equal initial plus mint amount"
+        preBalance+mintAmount,
+        postBalance
+      );
+
+      const totalSupply = await pg.provider.connection.getTokenSupply(mint)
+      assert.equal(
+        mintAmount * 10 ** metadata.decimals,
+        totalSupply.value.amount
       );
     });
    
     it("transfer tokens", async () => {
       const transferAmount = 10
-      const from_ata =  anchor.utils.token.associatedAddress({
-        mint: mint,
-        owner: payer,
-      });
-  
-      let initialBalance = await getSolBalance(pg,from_ata)
-   
-      await airdropSol(reciever.publicKey, 1e9); // 1 SOL
+      const from_ata =  payer_ata;
 
-      const reciever_ata = await createAssociatedTokenAccount(pg.provider.connection,reciever,mint,reciever.publicKey);
+      // const reciever_ata = await createAssociatedTokenAccount(pg.provider.connection,reciever,mint,reciever.publicKey);
   
+
+
+      const reciever_ata = anchor.utils.token.associatedAddress({
+        mint: mint,
+        owner: reciever.publicKey,
+      });
+
+      /**
+      * check sender balance
+      */ 
+
+       const senderPreBalance = 
+       await getSplBalance(pg,from_ata)
+    
+
+      /**
+      * check receiver balance
+      */ 
+
+      const receiverPreBalance = 
+       await getSplBalance(pg,reciever_ata)
+      assert.equal(
+       0,
+       receiverPreBalance,
+      );
+
 
       const context = {
+        from:payer,
+        to:reciever.publicKey,
         fromAta:from_ata,
         toAta:reciever_ata,
+        mint,
+        systemProgram: web3.SystemProgram.programId,
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
       };
   
        await pg.methods
-        .transfer(new BN(transferAmount * 10 ** metadata.decimals))
+        .transfer(new BN((transferAmount * 10 ** metadata.decimals).toString()))
         .accounts(context)
         .rpc();
      
@@ -158,36 +227,99 @@ describe("spl", async() => {
       /**
       * check sender balance
       */ 
-      const postBalance = (
-        await pg.provider.connection.getTokenAccountBalance(from_ata)
-      ).value.uiAmount;
+      const postBalance = 
+        await getSplBalance(pg,from_ata)
       assert.equal(
-        initialBalance - transferAmount,
+        senderPreBalance - transferAmount,
         postBalance,
-        "Post balance should equal initial plus mint amount"
       );
 
     /**
      * check receiver balance
     */ 
 
-      const receiverPostBalance = (
-        await pg.provider.connection.getTokenAccountBalance(reciever_ata)
-      ).value.uiAmount;
+      const receiverPostBalance = 
+        await getSplBalance(pg,reciever_ata)
       assert.equal(
         transferAmount,
         receiverPostBalance,
-        "Post balance should equal initial plus mint amount"
       );
 
     });
 
+    it("transfer tokens with manual ATA creation", async () => {
+      const transferAmount = 10
+      const from_ata =  payer_ata;
+      const reciever = account3
+      const reciever_ata = await createAssociatedTokenAccount(pg.provider.connection,reciever,mint,reciever.publicKey);
+  
+
+
+
+      /**
+      * check sender balance
+      */ 
+
+       const senderPreBalance = 
+       await getSplBalance(pg,from_ata)
+   
+
+      /**
+      * check receiver balance
+      */ 
+
+      const receiverPreBalance = 
+       await getSplBalance(pg,reciever_ata)
+      assert.equal(
+       0,
+       receiverPreBalance,
+      );
+
+
+      const context = {
+        from:payer,
+        to:reciever.publicKey,
+        fromAta:from_ata,
+        toAta:reciever_ata,
+        mint,
+        systemProgram: web3.SystemProgram.programId,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+      };
+  
+       await pg.methods
+        .transfer(new BN((transferAmount * 10 ** metadata.decimals).toString()))
+        .accounts(context)
+        .rpc();
+     
+
+      /**
+      * check sender balance
+      */ 
+      const postBalance = 
+        await getSplBalance(pg,from_ata)
+      assert.equal(
+        senderPreBalance - transferAmount,
+        postBalance,
+      );
+
+    /**
+     * check receiver balance
+    */ 
+
+      const receiverPostBalance = 
+        await getSplBalance(pg,reciever_ata)
+      assert.equal(
+        transferAmount,
+        receiverPostBalance,
+      );
+
+    });
+
+
     it("approve tokens", async () => {
       const approveAmount = 2;
-      const from_ata =  anchor.utils.token.associatedAddress({
-        mint: mint,
-        owner: payer,
-      });
+      const from_ata =  payer_ata
       
      const reciever_ata = anchor.utils.token.associatedAddress({
         mint: mint,
@@ -201,48 +333,184 @@ describe("spl", async() => {
       };
       
       await pg.methods
-        .approve(new BN(approveAmount * 10 ** metadata.decimals))
+        .approve(new BN((approveAmount * 10 ** metadata.decimals).toString()))
         .accounts(context)
         .rpc();
 
+     
       const context1 = {
+        from:reciever.publicKey,
+        to:reciever.publicKey,
         fromAta:from_ata,
         toAta:reciever_ata,
-        from:reciever.publicKey,
+        mint,
+        systemProgram: web3.SystemProgram.programId,
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
       };
 
 
 
-      const receiverBalance = (
-        await pg.provider.connection.getTokenAccountBalance(reciever_ata)
-      ).value.uiAmount;
+      const receiverBalance = 
+        await getSplBalance(pg,reciever_ata)
+        const senderBalance = 
+        await getSplBalance(pg,from_ata)
 
      await pg.methods
-        .transfer(new BN(approveAmount * 10 ** metadata.decimals))
+        .transfer(new BN((approveAmount * 10 ** metadata.decimals).toString()))
         .accounts(context1)
         .signers([reciever])
         .rpc();
   
 
-        const senderPostBalance = (
-          await pg.provider.connection.getTokenAccountBalance(from_ata)
-        ).value.uiAmount;
+        const senderPostBalance = await getSplBalance(pg,from_ata)
         assert.equal(
-          0,
+          senderBalance-approveAmount,
           senderPostBalance,
-          "Post balance should equal initial plus mint amount"
         );
 
 
-        const receiverPostBalance = (
-          await pg.provider.connection.getTokenAccountBalance(reciever_ata)
-        ).value.uiAmount;
+        const receiverPostBalance = 
+          await getSplBalance(pg,reciever_ata)
+        
     
         assert.equal(
           receiverPostBalance,
           receiverBalance+approveAmount,
-          "Post balance should equal initial plus mint amount"
         );
     });
-  })
+
+    it("burn tokens", async () => {
+    
+      const preTotalSupply = await pg.provider.connection.getTokenSupply(mint)
+     const reciever_ata = anchor.utils.token.associatedAddress({
+        mint: mint,
+        owner: reciever.publicKey,
+      });
+
+      const context = {
+        fromAta:reciever_ata,
+        mint:mint,
+        payer:reciever.publicKey,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+      };
+      
+      const receiverPreBalance = 
+      await getSplBalance(pg,reciever_ata)
+    
+
+      await pg.methods
+        .burn(new BN((burnAmount * 10 ** metadata.decimals).toString()))
+        .accounts(context)
+        .signers([reciever])
+        .rpc();
+
+
+
+        const receiverPostBalance = 
+          await getSplBalance(pg,reciever_ata)
+        
+    
+        assert.equal(
+          receiverPostBalance,
+          receiverPreBalance-burnAmount,
+        );
+        const postTotalSupply = await pg.provider.connection.getTokenSupply(mint)
+
+        assert.equal(preTotalSupply.value.amount,Number(postTotalSupply.value.amount)+Number(burnAmount* 10 ** metadata.decimals))
+
+
+      });
+
+      it("mint tokens fail", async () => {
+
+        const destination =  payer_ata;
+        
+        const context = {
+          mint,
+          destination,
+          payer,
+          rent: web3.SYSVAR_RENT_PUBKEY,
+          systemProgram: web3.SystemProgram.programId,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        };
+        try{
+            await pg.methods
+              .mintTokens(new BN(((mintAmount+2) * 10 ** metadata.decimals).toString()))
+              .accounts(context)
+              .rpc();
+        }catch(e){
+            if (e instanceof anchor.AnchorError){
+            assert(e.message.includes("CapExceed"))
+          }else{
+            assert(false);
+          }
+        }
+    
+      });
+
+      it("change mint authority", async () => {
+       
+  
+        const context = {
+          mint:mint,
+          currentAuthority:payer,
+          systemProgram: web3.SystemProgram.programId,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        };
+        
+
+        await pg.methods
+          .changeMintAuthority(reciever.publicKey)
+          .accounts(context)
+          .rpc();
+
+          const reciever_ata = anchor.utils.token.associatedAddress({
+            mint: mint,
+            owner: reciever.publicKey,
+          });
+
+          const context1 = {
+            mint,
+            destination:reciever_ata,
+            payer:reciever.publicKey,
+            rent: web3.SYSVAR_RENT_PUBKEY,
+            systemProgram: web3.SystemProgram.programId,
+            tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+            associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+          };
+      
+          const receiverPreBalance = 
+          await getSplBalance(pg,reciever_ata)
+
+          await pg.methods
+            .mintTokens(new BN((1 * 10 ** metadata.decimals).toString()))
+            .accounts(context1)
+            .signers([reciever])
+            .rpc();
+          
+          
+            const receiverPostBalance = 
+            await getSplBalance(pg,reciever_ata)
+  
+            assert.equal(
+              receiverPreBalance+1,
+              receiverPostBalance,
+            );
+          
+
+            const totalSupply = await pg.provider.connection.getTokenSupply(mint)
+            assert.equal(
+              (tokenTotalSupply  - burnAmount )* 10 ** metadata.decimals,
+              totalSupply.value.amount
+            );
+        });
+
+
+    
+
+    });
+    
+    

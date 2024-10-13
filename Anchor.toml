@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-spl = "2asoQGDxqfPXZSP5xSKd5ksT4v2rqy5BKNF2MwQhoRmt"
+spl = "GamEep1grEhZp6m1YLuhyxRDUR3kRzND9EiP5Uz8KJKT"
 
 [registry]
 url = "https://api.apr.dev"
