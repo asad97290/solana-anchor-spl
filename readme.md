@@ -27,8 +27,9 @@
 ## generate a new keypair
 
 ```solana-keygen new -o /home/asad/.config/solana/id.json```
-
-
+## generate a custom keypair
+```solana-keygen grind --starts-with game:1 --ignore-case```
+and put in target/deploy/spl-keypair.json
 ## run test
 
 ```anchor test```
